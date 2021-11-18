@@ -35,7 +35,7 @@ if [ ! -f "${REPO}" ]; then
 fi
 chmod +x "${REPO}"
 if [ ! -d .repo ]; then
-  ${REPO} init -u ${URL} -b ${BRANCH} -m ${MANIFEST} --repo-url=https://mirrors.tuna.tsinghua.edu.cn/git/git-repo --repo-branch=caf-stable
+  ${REPO} init -u ${URL} -b ${BRANCH} -m ${MANIFEST} --repo-url=https://mirrors.tuna.tsinghua.edu.cn/git/git-repo --repo-branch=stable
 fi
 if [ ! -f ".repo/manifests/${MANIFEST}" ]; then
   echo "ERROR: An Invalid Build ID was supplied."
