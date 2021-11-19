@@ -42,4 +42,4 @@ if [ ! -f ".repo/manifests/${MANIFEST}" ]; then
   echo "${ERR_MSG}"
   exit 2
 fi
-${REPO} sync --no-tags -j ${JOB}
+${REPO} sync --no-tags -j ${JOB} -c
