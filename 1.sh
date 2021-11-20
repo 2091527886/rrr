@@ -1,45 +1,144 @@
 #!/bin/bash
+
 set -o errexit
-CURL="/usr/bin/curl"
-REPO_DIST="https://gerrit.googlesource.com/git-repo"
-REPO_PATH="${HOME}/bin"
-REPO="${REPO_PATH}/repo"
-BUILDID="$1"
-if [ -z "$CAF_URL" ]; then
-  if [ ${BUILDID:0:11} == "LE.UM.2.4.1" ]; then
-    CAF_URL="ssh://git@git.codeaurora.org:9222/external/private_CAF_2.4.1/le/manifest.git"
-  elif [ ${BUILDID:0:11} == "LE.UM.5.3.2" ]; then
-    CAF_URL="ssh://git@git.codeaurora.org:9222/external/private_le/le/manifest.git"
-  else
-    CAF_URL="git://codeaurora.org/quic/le/le/manifest.git"
-  fi
+
+usage() {
+cat <<- EOF
+
+    Sync Proprietary from Grease and OSS content from CAF.
+
+    Usage:
+        For Proprietary + OSS: sync.sh --shallow-clone --quiet --jobs 8 -u <username> \
+                               -p <password> -b <grease_branch> -g <grease_server>
+        For OSS: sync.sh --shallow-clone --quiet --jobs 8
+
+    Options:
+        a) Fetch all branches instead of just pulling the branch specified in
+           the manifest. It is NOT recommended to specify this flag as it can
+           substantially increase the sync time.
+        q) Reduce verbosity
+        s) Create a shallow clone with depth 1
+        t) Fetch tags
+        j) Number of projects to fetch simultaneously (defaults to 4)
+        u) Username for Grease Access.
+        p) Password for Grease Access.
+        b) Grease branch
+        g) Grease server
+
+EOF
+
+exit 1
+}
+
+# Defaults
+
+quiet=false
+current_branch=true
+shallow_clone=false
+no_tags=true
+mainline=false
+repo_jobs=6
+mainline_au='::mainline_au::'
+au='::au::'
+grease_utilities_revision='::grease_utilities_revision::'
+caf_server='::caf_server::'
+caf_manifest_repo='::caf_manifest_repo::'
+manifest_url='git://codeaurora.org/quic/la/platform/manifest'
+manifest_file='caf_AU_LINUX_ANDROID_LA.UM.8.3.R1.10.00.00.520.085.xml'
+manifest_branch='release'
+repo_url='https://mirrors.tuna.tsinghua.edu.cn/git/git-repo'
+repo_branch='stable'
+
+long_opts="fetch-all-branches,shallow-clone,quiet,mainline,fetch-tags,jobs:,username:,password:branch:grease_server:"
+
+if ! getopts=$(getopt -o asqmtj:u:p:b:g: -l $long_opts -- "$@"); then
+   echo "Error processing options"
+   usage
 fi
-URL="$CAF_URL"
-if [ -z "$BRANCH" ]; then
-  BRANCH="release"
+
+eval set -- "$getopts"
+
+while true; do
+    case "$1" in
+       -a|--fetch-all-branches) current_branch=false;;
+       -s|--shallow-clone) shallow_clone=true;;
+       -q|--quiet) quiet=true;;
+       -m|--mainline) mainline=true;;
+       -t|--fetch-tags) no_tags=false;;
+       -j|--jobs) repo_jobs=$2 ; shift;;
+       -u|--username) username=$2; shift;;
+       -p|--password) password=$2; shift;;
+       -b|--branch) branch=$2; shift;;
+       -g|--grease_server) grease_server=$2; shift;;
+       --) shift ; break ;;
+       *) echo "Error processing args -- unrecognized option $1" >&2
+          usage;;
+    esac
+    shift
+done
+
+sync_args=()
+init_args=()
+build_tree="$(dirname $(readlink -f $0))"
+
+if ! [[ $repo_jobs =~ ^[0-9]+$ ]] ; then
+    echo 'ERROR: value passed to --jobs must be an integer'
+    usage
 fi
-TARGET="$2"
-JOB=8
-ERR_MSG="A list of valid IDs can be found at https://source.codeaurora.org/quic/le/le/manifest/log/?h=release".
-if [ -z "${BUILDID}" ]; then
-  echo "Please supply a Build ID."
-  echo "${ERR_MSG}"
-  echo "Example Usage: ./syncbuild.sh IOT.LE.1.0-04802-8x53"
-  exit 1
+
+if $quiet; then
+    sync_args+=('--quiet')
+fi
+
+if $current_branch; then
+    sync_args+=('--current-branch')
+fi
+
+if $no_tags; then
+    sync_args+=('--no-tags')
+fi
+
+if $shallow_clone; then
+    if ! repo init --help | grep -q '\-\-depth'; then
+        echo "ERROR: Current version of repo doesn't support shallow clone."
+        echo "Please upgrade repo to use this option"
+        usage
+    fi
+    init_args+=('--depth 1')
+fi
+
+if [[ ! -z $username ]] && [[ ! -z $password ]];then
+    build_tree="$(dirname $(readlink -f $0))/.."
+    grease_utilities_branch="remotes/origin/$(echo $branch | sed 's/\//\/project\//g')/$grease_utilities_revision"
+    caf_server=$(echo $caf_server | sed 's/ssh:\/\/git\.codeaurora\.org/ssh:\/\/git\@git\.codeaurora\.org/g')
+    ls --ignore sync.sh | xargs rm -rf
+    cd "$build_tree"
+    ls --ignore android | xargs rm -rf
+    git clone ssh://$username@grease-sd-stg.qualcomm.com:29418/platform/vendor/qcom-proprietary/grease/utilities grease_utilities
+    cd grease_utilities
+    git checkout $grease_utilities_branch
+    cd ..
+    cp -a grease_utilities/sync_all.sh grease_utilities/join_manifests.sh ./
+    if $mainline;then
+        ./sync_all.sh -a $mainline_au -b $branch -u $username -p $password \
+                  -s $grease_server -c $caf_manifest_repo -l $caf_server
+    else
+        ./sync_all.sh -a $au -b $branch -u $username -p $password \
+                  -s $grease_server -c $caf_manifest_repo -l $caf_server
+    fi
+    ls --ignore android | xargs rm -rf
+    echo "Sync Completed Successfully for Proprietary and OSS projects"
 else
-  MANIFEST="${BUILDID}.xml"
+    cd "$build_tree"
+    manifest_url=$(echo $manifest_url | sed 's/ssh:\/\/git\.codeaurora\.org/ssh:\/\/git\@git\.codeaurora\.org/g')
+    repo init --manifest-url $manifest_url \
+              --manifest-name $manifest_file \
+              --manifest-branch $manifest_branch \
+              --repo-url=$repo_url \
+              --repo-branch=$repo_branch \
+               ${init_args[@]}
+    repo sync --network-only --jobs=$repo_jobs ${sync_args[@]}
+    repo sync --detach --local-only --jobs=$repo_jobs ${sync_args[@]}
+
+    echo 'Sync Completed Successfully'
 fi
-mkdir -p "${REPO_PATH}"
-if [ ! -f "${REPO}" ]; then
-  ${CURL} "${REPO_DIST}" > "${REPO}"
-fi
-chmod +x "${REPO}"
-if [ ! -d .repo ]; then
-  ${REPO} init -u ${URL} -b ${BRANCH} -m ${MANIFEST} --repo-url=https://mirrors.tuna.tsinghua.edu.cn/git/git-repo --repo-branch=stable
-fi
-if [ ! -f ".repo/manifests/${MANIFEST}" ]; then
-  echo "ERROR: An Invalid Build ID was supplied."
-  echo "${ERR_MSG}"
-  exit 2
-fi
-${REPO} sync --no-tags -j ${JOB} -c
